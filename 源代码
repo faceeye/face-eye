@@ -1,0 +1,263 @@
+
+源代码
+识别人脸
+    #include "stdafx.h"
+　　#include "cv.h"
+　　#include "highgui.h"
+　　#include <stdio.h>
+
+　　#ifdef _EiC
+　　#define WIN32
+　　#endif
+
+　　static CvMemStorage* storage = 0;
+　　static CvHaarClassifierCascade* cascade = 0;
+
+　　void detect_and_draw( IplImage* image );
+
+　　const char* cascade_name =
+　　"haarcascade_eye.xml";//人脸检测分类器
+
+　　int main( int argc, char** argv )
+　　{
+　　CvCapture* capture = 0;
+　　IplImage *frame, *frame_copy = 0;
+　　int optlen = strlen("--cascade=");
+　　const char* input_name;
+
+　　if( argc > 1 && strncmp( argv[1], "--cascade=", optlen ) == 0 )
+　　{
+　　cascade_name = argv[1] + optlen;
+　　input_name = argc > 2 ? argv[2] : 0;
+　　}
+　　else
+　　{
+　　cascade_name = "C:/OpenCV2.0/data/haarcascades/haarcascade_eye.xml";//分类器路径
+
+　　input_name = argc > 1 ? argv[1] : 0;
+　　}
+
+　　cascade = (CvHaarClassifierCascade*)cvLoad( cascade_name, 0, 0, 0 );
+
+　　if( !cascade )//如果没有找到分类器，输出以下
+　　{
+　　fprintf( stderr, "ERROR: Could not load classifier cascade\n" );
+　　fprintf( stderr,
+　　"Usage: facedetect --cascade=\"<cascade_path>\" [filename|camera_index]\n" );
+　　return -1;
+　　}
+　　storage = cvCreateMemStorage(0);
+
+　　capture = cvCaptureFromCAM( !input_name ? 0 : input_name[0] - '0' );//读取摄像头
+　　if(!capture)//如果没有摄像头读取视频文件
+
+　　capture = cvCaptureFromAVI("检测.avi");
+
+　　cvNamedWindow( "result", 1);//创建窗口
+
+　　if( capture )
+　　{
+　　for(;;)
+　　{
+　　if( !cvGrabFrame( capture ))//从摄像头中抓取帧
+　　break;
+　　frame = cvRetrieveFrame( capture );//读取上边抓取的帧
+　　if( !frame )
+　　break;
+　　if( !frame_copy )
+　　frame_copy = cvCreateImage( cvSize(frame->width,frame->height),
+　　IPL_DEPTH_8U, frame->nChannels );
+　　if( frame->origin == IPL_ORIGIN_TL )
+　　cvCopy( frame, frame_copy, 0 );
+　　else
+　　cvFlip( frame, frame_copy, 0 );
+
+　　detect_and_draw( frame_copy );
+
+　　if( cvWaitKey( 10 ) >= 0 )
+　　break;
+　　}
+
+　　cvReleaseImage( &frame_copy );
+　　cvReleaseCapture( &capture );
+　　}
+　　else//没检测到视频文件或者摄像头
+　　{
+　　const char* filename =   (char*)"检测.jpg";//读图片
+　　IplImage* image = cvLoadImage( filename, 1 );
+
+　　if( image )
+　　{
+　　detect_and_draw( image );
+　　cvWaitKey(0);
+　　cvReleaseImage( &image );
+　　}
+　　else
+　　{
+
+　　FILE* f = fopen( filename, "rt" );
+　　if( f )
+　　{
+　　char buf[1000+1];
+　　while( fgets( buf, 1000, f ) )
+　　{
+　　int len = (int)strlen(buf);
+　　while( len > 0 && isspace(buf[len-1]) )
+　　len--;
+　　buf[len] = '\0';
+　　image = cvLoadImage( buf, 1 );
+　　if( image )
+　　{
+　　detect_and_draw( image );
+　　cvWaitKey(0);
+　　cvReleaseImage( &image );
+　　}
+　　}
+　　fclose(f);
+　　}
+　　}
+
+　　}
+
+　　cvDestroyWindow("result");
+
+　　return 0;
+　　}
+
+　　void detect_and_draw( IplImage* img )
+　　{
+　　static CvScalar colors[] =
+　　{
+　　{{0,0,255}},
+　　{{0,128,255}},
+　　{{0,255,255}},
+　　{{0,255,0}},
+　　{{255,128,0}},
+　　{{255,255,0}},
+　　{{255,0,0}},
+　　{{255,0,255}}
+　　};
+　　double scale = 1.3;
+　　IplImage* gray = cvCreateImage( cvSize(img->width,img->height), 8, 1 );
+　　IplImage* small_img = cvCreateImage( cvSize( cvRound (img->width/scale),
+　　cvRound (img->height/scale)),
+　　8, 1 );
+　　int i;
+
+　　cvCvtColor( img, gray, CV_BGR2GRAY );
+　　cvResize( gray, small_img, CV_INTER_LINEAR );
+　　cvEqualizeHist( small_img, small_img );
+　　cvClearMemStorage( storage );
+
+　　if( cascade )
+　　{
+　　double t = (double)cvGetTickCount();
+　　CvSeq* faces = cvHaarDetectObjects( small_img, cascade, storage,
+　　1.1, 2, 0/*CV_HAAR_DO_CANNY_PRUNING*/,
+　　cvSize(30, 30) );//检测人脸返回矩形人脸
+　　t = (double)cvGetTickCount() - t;
+　　printf( "detection time = %gms\n", t/((double)cvGetTickFrequency()*1000.) );
+　　for( i = 0; i < (faces ? faces->total : 0); i++ )//找到矩形中心，把矩形转化为圆形
+　　{
+　　CvRect* r = (CvRect*)cvGetSeqElem( faces, i );
+　　CvPoint center;
+　　int radius;
+　　center.x = cvRound((r->x + r->width*0.5)*scale);
+　　center.y = cvRound((r->y + r->height*0.5)*scale);
+　　radius = cvRound((r->width + r->height)*0.25*scale);
+　　cvCircle( img, center, radius, colors[i%8], 3, 8, 0 );
+　　}
+　　}
+
+　　cvShowImage( "result", img );
+　　cvReleaseImage( &gray );
+　　cvReleaseImage( &small_img );
+}
+运行结果：
+
+动态识别人脸以及人眼
+#include "cv.h"
+#include "highgui.h"
+#include <assert.h>
+#include<iostream>
+#include <stdio.h>
+using namespace std;
+
+int main()
+{
+	CvCapture* capture = 0;
+	IplImage *frame, *frame_copy = 0;
+	const char* input_name=0;
+	capture = cvCaptureFromCAM( !input_name ? 0 : input_name[0] - '0' );//读取摄像头
+	if(!capture)//如果没有摄像头读取视频文件
+		capture = cvCaptureFromAVI("视频.avi");
+	cvNamedWindow( "Example1", 1 );
+	if( capture )
+	{
+	for(;;)
+	{
+	if( !cvGrabFrame( capture ))//从摄像头或者视频中抓取帧
+	break;
+	frame = cvRetrieveFrame( capture );//读取上边抓取的帧
+	if( !frame )
+	break;
+	if( !frame_copy )
+	frame_copy = cvCreateImage( cvSize(frame->width,frame->height),
+	IPL_DEPTH_8U, frame->nChannels );
+	if( frame->origin == IPL_ORIGIN_TL )
+	cvCopy( frame, frame_copy, 0 );
+	else
+	cvFlip( frame, frame_copy, 0 );
+    
+    CvMemStorage* storage1=0;
+    storage1=cvCreateMemStorage(0);
+    CvHaarClassifierCascade *cascade_f=0;
+    const char *cascade_name1="D://Program Files//opencv//sources//data//haarcascades//haarcascade_frontalface_alt2.xml";
+    cascade_f=(CvHaarClassifierCascade*)cvLoad(cascade_name1,0,0,0);
+    assert(cascade_f!=NULL);
+    double t = (double)cvGetTickCount();
+	CvSeq *faces=cvHaarDetectObjects(frame_copy,cascade_f,storage1,1.1,3,11,cvSize(30,30));
+    t = (double)cvGetTickCount() - t;
+	printf( "face detection time = %gms\n", t/((double)cvGetTickFrequency()*1000.) );
+	for(int ii=0;ii<(faces?faces->total:0);ii++)
+    {
+          CvRect *face = (CvRect*)cvGetSeqElem(faces, ii);
+          cvRectangle(frame_copy,cvPoint(face->x, face->y),cvPoint(face->x + face->width,face->y + face->height)
+                ,CV_RGB(255, 0, 0),1, 8, 0);
+        cvSetImageROI(frame_copy,cvRect(face->x,face->y + (face->height/5.5), face->width,face->height/3.0));
+
+    CvMemStorage* storage = 0;
+    storage = cvCreateMemStorage(0) ;
+    CvHaarClassifierCascade* cascade_e = 0;
+    const char* cascade_name2 = "D://Program Files//opencv//sources//data//haarcascades//haarcascade_eye.xml";
+    cascade_e = (CvHaarClassifierCascade*)cvLoad( cascade_name2, 0, 0, 0 );
+    assert(cascade_e != NULL);
+    //storage = cvCreateMemStorage(0) ;
+   double t = (double)cvGetTickCount();
+    CvSeq *eyes = cvHaarDetectObjects(frame_copy,cascade_e,storage,1.01,15, 3,cvSize(10,10));
+    t = (double)cvGetTickCount() - t;
+printf( "detection time = %gms\n", t/((double)cvGetTickFrequency()*1000.) );
+	int i;
+    cout<<eyes->total<<endl;
+   
+    for( i = 0; i < (eyes ? eyes->total : 0); i++ )
+	{
+    CvRect *eye = (CvRect*)cvGetSeqElem(eyes, i);
+cvRectangle(frame_copy, cvPoint(eye->x, eye->y),cvPoint(eye->x + eye->width, eye->y + eye->height),CV_RGB(255, 0, 0),1, 8, 0);
+    }
+    cvResetImageROI(frame_copy);
+    }
+	
+cvShowImage( "Example1",  frame_copy);
+if( cvWaitKey( 10 ) >= 0 )
+break;
+}
+
+cvReleaseImage( &frame_copy );
+cvReleaseCapture( &capture );
+}
+	cvDestroyWindow("result");
+
+return 0;
+}
+运行结果图：
